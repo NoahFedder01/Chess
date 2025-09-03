@@ -12,6 +12,16 @@ public class ChessBoard : MonoBehaviour
     public Color validMoveColor = Color.green;
     public GameObject highlightPrefab; // Optional: assign a prefab for square highlights
     
+    [Header("Game State")]
+    public bool whiteToMove = true; // Track whose turn it is
+    public bool whiteCanCastleKingside = true;
+    public bool whiteCanCastleQueenside = true;
+    public bool blackCanCastleKingside = true;
+    public bool blackCanCastleQueenside = true;
+    public Vector2Int enPassantTarget = new Vector2Int(-1, -1); // -1,-1 means no en passant
+    public int halfmoveClock = 0; // Moves since last capture or pawn move
+    public int fullmoveNumber = 1; // Increments after black's move
+    
     // Board state tracking
     private ChessPiece[,] boardPieces = new ChessPiece[8, 8];
     private List<GameObject> highlightObjects = new List<GameObject>();
@@ -19,6 +29,9 @@ public class ChessBoard : MonoBehaviour
     // Current dragging state
     private ChessPiece currentDraggingPiece;
     private List<Vector2Int> validMoves = new List<Vector2Int>();
+    
+    // Reference to GameManager for FEN updates
+    private GameManager gameManager;
 
     void Awake()
     {
@@ -28,6 +41,9 @@ public class ChessBoard : MonoBehaviour
         {
             Debug.LogWarning("Multiple ChessBoard instances found. This might cause issues.");
         }
+        
+        // Find the GameManager
+        gameManager = FindFirstObjectByType<GameManager>();
     }
 
     public Vector2Int WorldToBoardPosition(Vector3 worldPos)
@@ -99,6 +115,8 @@ public class ChessBoard : MonoBehaviour
     {
         if (!IsValidPosition(fromPos) || !IsValidPosition(toPos)) return;
         
+        bool isCapture = false;
+        
         // Clear the old position
         if (IsValidPosition(fromPos))
         {
@@ -111,19 +129,36 @@ public class ChessBoard : MonoBehaviour
         {
             Destroy(capturedPiece.gameObject);
             Debug.Log($"{piece.pieceType} captured {capturedPiece.pieceType}");
+            isCapture = true;
         }
         
         // Place piece at new position
         boardPieces[toPos.y, toPos.x] = piece;
         piece.boardPosition = toPos;
         
+        // Update game state
+        UpdateGameStateAfterMove(piece, fromPos, toPos, isCapture);
+        
+        // Generate and update FEN
+        string newFEN = GenerateFEN();
+        if (gameManager != null)
+        {
+            gameManager.UpdateFEN(newFEN);
+        }
+        
         Debug.Log($"Moved {piece.pieceType} from {fromPos} to {toPos}");
+        Debug.Log($"New FEN: {newFEN}");
     }
 
     public ChessPiece GetPieceAt(Vector2Int pos)
     {
         if (!IsValidPosition(pos)) return null;
         return boardPieces[pos.y, pos.x];
+    }
+
+    public void SetGameManager(GameManager gm)
+    {
+        gameManager = gm;
     }
 
     public void OnPieceStartDrag(ChessPiece piece)
@@ -206,7 +241,7 @@ public class ChessBoard : MonoBehaviour
             }
         }
         
-        // Parse FEN string (simplified version)
+        // Parse FEN string
         string[] fenParts = fen.Split(' ');
         string boardData = fenParts[0];
         
@@ -235,6 +270,9 @@ public class ChessBoard : MonoBehaviour
                 file++;
             }
         }
+        
+        // Parse game state from FEN
+        ParseFENGameState(fen);
     }
 
     private void CreatePiece(char pieceChar, bool isWhite, Vector2Int boardPos, Vector3 worldPos)
@@ -270,6 +308,169 @@ public class ChessBoard : MonoBehaviour
                 }
             }
             Debug.Log($"Rank {y + 1}: {row}");
+        }
+    }
+
+    // Update game state after a move
+    private void UpdateGameStateAfterMove(ChessPiece piece, Vector2Int fromPos, Vector2Int toPos, bool isCapture)
+    {
+        // Reset en passant target
+        enPassantTarget = new Vector2Int(-1, -1);
+        
+        // Handle pawn moves (check for double move for en passant)
+        if (char.ToLower(piece.pieceType) == 'p')
+        {
+            halfmoveClock = 0; // Reset on pawn move
+            
+            // Check for double pawn move (en passant target)
+            int moveDistance = Mathf.Abs(toPos.y - fromPos.y);
+            if (moveDistance == 2)
+            {
+                // Set en passant target square
+                int targetRank = piece.isWhite ? fromPos.y + 1 : fromPos.y - 1;
+                enPassantTarget = new Vector2Int(fromPos.x, targetRank);
+            }
+        }
+        else if (isCapture)
+        {
+            halfmoveClock = 0; // Reset on capture
+        }
+        else
+        {
+            halfmoveClock++; // Increment for non-pawn, non-capture moves
+        }
+        
+        // Handle castling rights (simplified - just disable if king or rook moves)
+        if (piece.pieceType == 'K') // White king
+        {
+            whiteCanCastleKingside = false;
+            whiteCanCastleQueenside = false;
+        }
+        else if (piece.pieceType == 'k') // Black king
+        {
+            blackCanCastleKingside = false;
+            blackCanCastleQueenside = false;
+        }
+        else if (piece.pieceType == 'R') // White rook
+        {
+            if (fromPos.x == 0) whiteCanCastleQueenside = false; // Queenside rook
+            if (fromPos.x == 7) whiteCanCastleKingside = false; // Kingside rook
+        }
+        else if (piece.pieceType == 'r') // Black rook
+        {
+            if (fromPos.x == 0) blackCanCastleQueenside = false; // Queenside rook
+            if (fromPos.x == 7) blackCanCastleKingside = false; // Kingside rook
+        }
+        
+        // Switch turns
+        whiteToMove = !whiteToMove;
+        
+        // Increment fullmove counter after black's move
+        if (whiteToMove)
+        {
+            fullmoveNumber++;
+        }
+    }
+
+    // Generate FEN string from current board state
+    public string GenerateFEN()
+    {
+        string fen = "";
+        
+        // 1. Piece placement (ranks 8-1)
+        for (int rank = 7; rank >= 0; rank--)
+        {
+            int emptySquares = 0;
+            for (int file = 0; file < 8; file++)
+            {
+                ChessPiece piece = boardPieces[rank, file];
+                if (piece == null)
+                {
+                    emptySquares++;
+                }
+                else
+                {
+                    if (emptySquares > 0)
+                    {
+                        fen += emptySquares.ToString();
+                        emptySquares = 0;
+                    }
+                    fen += piece.pieceType;
+                }
+            }
+            if (emptySquares > 0)
+            {
+                fen += emptySquares.ToString();
+            }
+            if (rank > 0) fen += "/";
+        }
+        
+        // 2. Active color
+        fen += whiteToMove ? " w " : " b ";
+        
+        // 3. Castling availability
+        string castling = "";
+        if (whiteCanCastleKingside) castling += "K";
+        if (whiteCanCastleQueenside) castling += "Q";
+        if (blackCanCastleKingside) castling += "k";
+        if (blackCanCastleQueenside) castling += "q";
+        if (castling == "") castling = "-";
+        fen += castling + " ";
+        
+        // 4. En passant target
+        if (enPassantTarget.x >= 0 && enPassantTarget.y >= 0)
+        {
+            char file = (char)('a' + enPassantTarget.x);
+            int rank = enPassantTarget.y + 1;
+            fen += file.ToString() + rank.ToString();
+        }
+        else
+        {
+            fen += "-";
+        }
+        
+        // 5. Halfmove clock
+        fen += " " + halfmoveClock.ToString();
+        
+        // 6. Fullmove number
+        fen += " " + fullmoveNumber.ToString();
+        
+        return fen;
+    }
+
+    // Parse FEN to set game state
+    public void ParseFENGameState(string fen)
+    {
+        string[] parts = fen.Split(' ');
+        if (parts.Length >= 6)
+        {
+            // Active color
+            whiteToMove = parts[1] == "w";
+            
+            // Castling rights
+            string castling = parts[2];
+            whiteCanCastleKingside = castling.Contains("K");
+            whiteCanCastleQueenside = castling.Contains("Q");
+            blackCanCastleKingside = castling.Contains("k");
+            blackCanCastleQueenside = castling.Contains("q");
+            
+            // En passant target
+            if (parts[3] != "-")
+            {
+                char file = parts[3][0];
+                int rank = int.Parse(parts[3][1].ToString());
+                enPassantTarget = new Vector2Int(file - 'a', rank - 1);
+            }
+            else
+            {
+                enPassantTarget = new Vector2Int(-1, -1);
+            }
+            
+            // Halfmove clock
+            halfmoveClock = int.Parse(parts[4]);
+            
+            // Fullmove number
+            fullmoveNumber = int.Parse(parts[5]);
         }
     }
 }

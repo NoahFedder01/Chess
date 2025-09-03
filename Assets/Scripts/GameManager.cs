@@ -38,8 +38,9 @@ public class GameManager : MonoBehaviour {
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
     void Start() {
-        // Initialize the chess board with pieces from FEN
+        // Ensure ChessBoard has reference to this GameManager
         if (chessBoard != null) {
+            chessBoard.SetGameManager(this);
             chessBoard.InitializeFromFEN(FEN);
         }
         UpdateFENDisplay();
@@ -56,8 +57,9 @@ public class GameManager : MonoBehaviour {
         }
     }
 
-    // Method to update FEN when pieces are moved (can be called by ChessBoard)
+    // Method to update FEN when pieces are moved (called by ChessBoard)
     public void UpdateFEN(string newFEN) {
         FEN = newFEN;
+        UpdateFENDisplay(); // Immediately update the display
     }
 }
