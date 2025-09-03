@@ -6,17 +6,23 @@ public class CreateChessBoard : MonoBehaviour
         lightColor = new Color32(255, 209, 126, 255);
 
     [Header("Board Settings")]
-    public float squareSize = 1f;
     public int boardLayer = 0; // Layer for board squares (behind pieces)
 
     void CreateSquare(Color32 color, Vector2 position) {
-        // Create a 1x1 texture with the given color
-        Texture2D texture = new Texture2D(1, 1);
-        texture.SetPixel(0, 0, color);
+        // Create a larger texture for better quality
+        int textureSize = 64; // 64x64 pixels for good quality
+        Texture2D texture = new Texture2D(textureSize, textureSize);
+        
+        // Fill the entire texture with the color
+        Color32[] colors = new Color32[textureSize * textureSize];
+        for (int i = 0; i < colors.Length; i++) {
+            colors[i] = color;
+        }
+        texture.SetPixels32(colors);
         texture.Apply();
 
         // Create a sprite from the texture
-        Sprite sprite = Sprite.Create(texture, new Rect(0, 0, 1, 1), new Vector2(0.5f, 0.5f));
+        Sprite sprite = Sprite.Create(texture, new Rect(0, 0, textureSize, textureSize), new Vector2(0.5f, 0.5f), textureSize);
 
         // Create a GameObject for this square
         GameObject square = new GameObject($"Square_{position.x}_{position.y}");
@@ -28,8 +34,7 @@ public class CreateChessBoard : MonoBehaviour
         sr.sprite = sprite;
         sr.sortingOrder = boardLayer;
         
-        // Scale the square
-        square.transform.localScale = Vector3.one * squareSize;
+        // The sprite should now be exactly 1 unit in size, matching the piece spacing
     }
 
     void RenderChessBoard() {
